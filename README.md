@@ -81,6 +81,66 @@ response = model.generate_content(
 )
 ```
 
+## Streaming
+
+All providers support streaming. Token usage is automatically tracked after the stream completes.
+
+### OpenAI Streaming
+
+```python
+from agentracer.openai import openai
+
+stream = openai.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Write a poem"}],
+    stream=True,
+    feature_tag="poet"
+)
+
+for chunk in stream:
+    content = chunk.choices[0].delta.content
+    if content:
+        print(content, end="")
+# Telemetry is sent automatically after the stream ends
+```
+
+### Anthropic Streaming
+
+```python
+from agentracer.anthropic import anthropic
+
+stream = anthropic.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Write a poem"}],
+    stream=True,
+    feature_tag="poet"
+)
+
+for event in stream:
+    if event.type == "content_block_delta":
+        print(event.delta.text, end="")
+```
+
+### Gemini Streaming
+
+```python
+from agentracer.gemini import gemini
+
+model = gemini.GenerativeModel("gemini-1.5-pro")
+
+stream = model.generate_content(
+    "Write a poem",
+    stream=True,
+    feature_tag="poet"
+)
+
+for chunk in stream:
+    print(chunk.text, end="")
+```
+
+> Streaming works transparently -- usage is captured from the final chunk (OpenAI), SSE events (Anthropic), or chunk metadata (Gemini), then sent as a single telemetry event after the stream finishes.
+
 ## Feature Tags
 
 Feature tags let you group and track costs by feature across your application. There are three ways to apply them:
