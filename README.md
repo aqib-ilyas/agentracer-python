@@ -1,6 +1,6 @@
 # Agentracer Python SDK
 
-Lightweight AI cost observability. Know exactly what your AI features cost.
+Lightweight AI incident detection. Catch cost spikes, latency anomalies, and prompt bloat before they hit your users.
 
 [![PyPI version](https://badge.fury.io/py/agentracer.svg)](https://pypi.org/project/agentracer/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentracer"
 version = "0.1.0"
-description = "Lightweight AI cost observability. Know exactly what your AI features cost."
+description = "Lightweight AI incident detection. Catch cost spikes, latency anomalies, and prompt bloat before they hit your users."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
