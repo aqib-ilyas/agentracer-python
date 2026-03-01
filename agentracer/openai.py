@@ -61,15 +61,31 @@ try:
                 return _wrap_openai_stream(stream, kwargs.get("model", "unknown"), feature_tag, start)
 
             start = time.time()
-            response = self._original.create(**kwargs)
+            try:
+                response = self._original.create(**kwargs)
+            except Exception as exc:
+                latency = (time.time() - start) * 1000
+                track(
+                    model=kwargs.get("model", "unknown"),
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency,
+                    feature_tag=feature_tag,
+                    provider="openai",
+                    success=False,
+                    error_type=type(exc).__name__,
+                )
+                raise
             latency = (time.time() - start) * 1000
 
             try:
                 usage = response.usage
+                cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0
                 track(
                     model=kwargs.get("model", "unknown"),
                     input_tokens=usage.prompt_tokens,
                     output_tokens=usage.completion_tokens,
+                    cached_tokens=cached,
                     latency_ms=latency,
                     feature_tag=feature_tag,
                     provider="openai"
@@ -78,26 +94,46 @@ try:
                 pass
             return response
 
-        async def acreate(self, **kwargs):
+    class _TrackedAsyncCompletions:
+        def __init__(self, original):
+            self._original = original
+
+        async def create(self, **kwargs):
             feature_tag = kwargs.pop("feature_tag", None) or _current_feature_tag.get() or "unknown"
 
             if kwargs.get("stream"):
                 kwargs.setdefault("stream_options", {})
                 kwargs["stream_options"]["include_usage"] = True
                 start = time.time()
-                stream = await self._original.acreate(**kwargs)
+                stream = await self._original.create(**kwargs)
                 return _wrap_openai_stream_async(stream, kwargs.get("model", "unknown"), feature_tag, start)
 
             start = time.time()
-            response = await self._original.acreate(**kwargs)
+            try:
+                response = await self._original.create(**kwargs)
+            except Exception as exc:
+                latency = (time.time() - start) * 1000
+                track(
+                    model=kwargs.get("model", "unknown"),
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency,
+                    feature_tag=feature_tag,
+                    provider="openai",
+                    success=False,
+                    error_type=type(exc).__name__,
+                )
+                raise
             latency = (time.time() - start) * 1000
 
             try:
                 usage = response.usage
+                cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0
                 track(
                     model=kwargs.get("model", "unknown"),
                     input_tokens=usage.prompt_tokens,
                     output_tokens=usage.completion_tokens,
+                    cached_tokens=cached,
                     latency_ms=latency,
                     feature_tag=feature_tag,
                     provider="openai"
@@ -114,13 +150,22 @@ try:
         def completions(self):
             return _TrackedCompletions(self._original.completions)
 
+    class _TrackedAsyncChat:
+        def __init__(self, original):
+            self._original = original
+
+        @property
+        def completions(self):
+            return _TrackedAsyncCompletions(self._original.completions)
+
     class _TrackedOpenAI:
-        def __init__(self):
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
             self._client = None
 
         def _get_client(self):
             if not self._client:
-                self._client = _openai_lib.OpenAI()
+                self._client = _openai_lib.OpenAI(**self._kwargs)
             return self._client
 
         @property
@@ -130,6 +175,25 @@ try:
         def __getattr__(self, name):
             return getattr(self._get_client(), name)
 
+    class _TrackedAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+            self._client = None
+
+        def _get_client(self):
+            if not self._client:
+                self._client = _openai_lib.AsyncOpenAI(**self._kwargs)
+            return self._client
+
+        @property
+        def chat(self):
+            return _TrackedAsyncChat(self._get_client().chat)
+
+        def __getattr__(self, name):
+            return getattr(self._get_client(), name)
+
+    TrackedOpenAI = _TrackedOpenAI
+    TrackedAsyncOpenAI = _TrackedAsyncOpenAI
     openai = _TrackedOpenAI()
 
 except ImportError:

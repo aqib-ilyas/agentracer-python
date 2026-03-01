@@ -87,3 +87,73 @@ class TestTrack:
             import time
             time.sleep(0.1)
             mock_send.assert_not_called()
+
+    @patch("agentracer._send_telemetry_sync")
+    def test_picks_up_context_var_feature_tag(self, mock_send):
+        agentracer.init(tracker_api_key="k", project_id="proj-1", enabled=True)
+        with agentracer.feature_context("from-context"):
+            agentracer.track(
+                model="gpt-4",
+                input_tokens=10,
+                output_tokens=5,
+                latency_ms=100,
+                provider="openai",
+            )
+        import time
+        time.sleep(0.1)
+        mock_send.assert_called_once()
+        payload = mock_send.call_args[0][0]
+        assert payload["feature_tag"] == "from-context"
+
+    @patch("agentracer._send_telemetry_sync")
+    def test_explicit_feature_tag_overrides_context(self, mock_send):
+        agentracer.init(tracker_api_key="k", project_id="proj-1", enabled=True)
+        with agentracer.feature_context("from-context"):
+            agentracer.track(
+                model="gpt-4",
+                input_tokens=10,
+                output_tokens=5,
+                latency_ms=100,
+                feature_tag="explicit",
+                provider="openai",
+            )
+        import time
+        time.sleep(0.1)
+        mock_send.assert_called_once()
+        payload = mock_send.call_args[0][0]
+        assert payload["feature_tag"] == "explicit"
+
+    @patch("agentracer._send_telemetry_sync")
+    def test_defaults_to_unknown_without_context(self, mock_send):
+        agentracer.init(tracker_api_key="k", project_id="proj-1", enabled=True)
+        agentracer.track(
+            model="gpt-4",
+            input_tokens=10,
+            output_tokens=5,
+            latency_ms=100,
+        )
+        import time
+        time.sleep(0.1)
+        mock_send.assert_called_once()
+        payload = mock_send.call_args[0][0]
+        assert payload["feature_tag"] == "unknown"
+
+
+class TestAgentRun:
+    @patch("agentracer._send_run_api_sync")
+    def test_context_manager_sends_start_and_end(self, mock_api):
+        agentracer.init(tracker_api_key="k", project_id="proj-1", enabled=True)
+        with agentracer.AgentRun(run_name="test-run", feature_tag="bot") as run:
+            assert run.run_id is not None
+            assert agentracer._current_run.get() is run
+        # After exit, current_run should be reset
+        assert agentracer._current_run.get() is None
+        import time
+        time.sleep(0.1)
+        # Should have called start and end
+        calls = mock_api.call_args_list
+        assert len(calls) >= 2
+        start_payload = calls[0][0][0]
+        assert start_payload["run_name"] == "test-run"
+        end_payload = calls[1][0][0]
+        assert end_payload["status"] == "completed"

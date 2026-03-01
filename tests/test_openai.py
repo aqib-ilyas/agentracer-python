@@ -6,7 +6,7 @@ import agentracer
 _mock_openai_module = MagicMock()
 sys.modules["openai"] = _mock_openai_module
 
-from agentracer.openai import openai  # noqa: E402
+from agentracer.openai import openai, TrackedOpenAI  # noqa: E402
 
 # The track function reference that agentracer.openai captured at import time
 TRACK_PATCH_TARGET = "agentracer.openai.track"
@@ -125,3 +125,9 @@ class TestOpenAIStreaming:
 
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["stream_options"]["include_usage"] is True
+
+
+class TestTrackedOpenAIConstructor:
+    def test_passes_kwargs_to_openai(self):
+        client = TrackedOpenAI(api_key="sk-test", base_url="https://custom.api")
+        assert client._kwargs == {"api_key": "sk-test", "base_url": "https://custom.api"}

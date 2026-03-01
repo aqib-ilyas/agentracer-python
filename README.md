@@ -1,6 +1,6 @@
 # Agentracer Python SDK
 
-Lightweight AI incident detection. Catch cost spikes, latency anomalies, and prompt bloat before they hit your users.
+Lightweight AI observability. Catch cost spikes, latency anomalies, and prompt bloat before they hit your users.
 
 [![PyPI version](https://badge.fury.io/py/agentracer.svg)](https://pypi.org/project/agentracer/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -72,13 +72,85 @@ response = anthropic.messages.create(
 ### Google Gemini
 
 ```python
+import google.generativeai as genai
 from agentracer.gemini import gemini
+
+# Configure your API key as usual
+genai.configure(api_key="your-gemini-api-key")
 
 model = gemini.GenerativeModel("gemini-1.5-pro")
 response = model.generate_content(
     "Hello!",
     feature_tag="content-gen"  # optional: tag this call
 )
+```
+
+## Custom Client Configuration
+
+The default imports (`openai`, `anthropic`) create clients using environment variables. To pass custom configuration like `api_key` or `base_url`, use the class constructors:
+
+### OpenAI
+
+```python
+from agentracer.openai import TrackedOpenAI
+
+openai = TrackedOpenAI(api_key="sk-...", base_url="https://custom.api/v1")
+
+response = openai.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### Anthropic
+
+```python
+from agentracer.anthropic import TrackedAnthropic
+
+anthropic = TrackedAnthropic(api_key="sk-ant-...")
+
+response = anthropic.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+## Async Support
+
+For async applications, use the async client wrappers:
+
+### Async OpenAI
+
+```python
+from agentracer.openai import TrackedAsyncOpenAI
+
+client = TrackedAsyncOpenAI()
+
+async def chat(message: str):
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": message}],
+        feature_tag="async-chatbot"
+    )
+    return response.choices[0].message.content
+```
+
+### Async Anthropic
+
+```python
+from agentracer.anthropic import TrackedAsyncAnthropic
+
+client = TrackedAsyncAnthropic()
+
+async def chat(message: str):
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": message}],
+        feature_tag="async-summarizer"
+    )
+    return response.content[0].text
 ```
 
 ## Streaming
@@ -175,7 +247,7 @@ def handle_chat(message: str):
 # Async functions work too
 @agentracer.observe(feature_tag="async-chatbot")
 async def handle_chat_async(message: str):
-    response = openai.chat.completions.create(
+    response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": message}]
     )
@@ -202,6 +274,70 @@ with feature_context("report-generator"):
     )
 ```
 
+## Agent Runs
+
+Track multi-step agent workflows as a single run with `AgentRun`. Each LLM call inside the run is automatically recorded as a step.
+
+```python
+from agentracer import AgentRun
+from agentracer.openai import openai
+
+with AgentRun(run_name="research-agent", feature_tag="research") as run:
+    # Step 1: Plan
+    plan = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Plan a research outline"}]
+    )
+
+    # Step 2: Execute
+    result = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": f"Research: {plan.choices[0].message.content}"}]
+    )
+
+    # Step 3: Summarize
+    summary = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"Summarize: {result.choices[0].message.content}"}]
+    )
+# All 3 steps are tracked under a single run with timing, tokens, and status
+```
+
+### Async Agent Runs
+
+`AgentRun` also works as an async context manager:
+
+```python
+from agentracer import AgentRun
+from agentracer.openai import TrackedAsyncOpenAI
+
+client = TrackedAsyncOpenAI()
+
+async def run_agent(query: str):
+    async with AgentRun(run_name="async-agent", feature_tag="agent") as run:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": query}]
+        )
+        return response.choices[0].message.content
+```
+
+### AgentRun Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `run_name` | `str` | `None` | Name for this run (shown in dashboard) |
+| `feature_tag` | `str` | `"unknown"` | Feature tag applied to all steps |
+| `end_user_id` | `str` | `None` | ID of the end user triggering this run |
+| `run_id` | `str` | auto-generated | Custom run ID (UUID v4 generated if omitted) |
+
+### What gets tracked per run
+
+- **Start/end timestamps** and total duration
+- **Status**: `completed` or `failed` (auto-detected from exceptions)
+- **Each step**: model, provider, tokens, latency, success/failure
+- **Aggregates**: total steps, total tokens, total cost, total latency
+
 ## Manual Tracking
 
 For custom integrations or providers not yet supported, use `track()` directly:
@@ -215,7 +351,9 @@ agentracer.track(
     output_tokens=300,
     latency_ms=420.5,
     feature_tag="custom-pipeline",
-    provider="openai"
+    provider="openai",
+    end_user_id="user-123",     # optional: track per-user costs
+    cached_tokens=50,           # optional: cached/prompt-cache tokens
 )
 ```
 
@@ -224,9 +362,10 @@ agentracer.track(
 ```python
 from fastapi import FastAPI
 import agentracer
-from agentracer.openai import openai
+from agentracer.openai import TrackedAsyncOpenAI
 
 app = FastAPI()
+client = TrackedAsyncOpenAI()
 
 agentracer.init(
     tracker_api_key="at_your_api_key",
@@ -237,7 +376,7 @@ agentracer.init(
 @app.post("/chat")
 @agentracer.observe(feature_tag="chatbot")
 async def chat(message: str):
-    response = openai.chat.completions.create(
+    response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": message}]
     )
@@ -246,11 +385,20 @@ async def chat(message: str):
 @app.post("/summarize")
 async def summarize(text: str):
     with agentracer.feature_context("summarizer"):
-        response = openai.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": f"Summarize: {text}"}]
         )
     return {"summary": response.choices[0].message.content}
+
+@app.post("/agent")
+async def agent(query: str):
+    async with agentracer.AgentRun(run_name="qa-agent", feature_tag="agent") as run:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": query}]
+        )
+    return {"answer": response.choices[0].message.content}
 ```
 
 ## Django Example
@@ -267,7 +415,7 @@ agentracer.init(
 
 # views.py
 from agentracer.openai import openai
-from agentracer import feature_context
+from agentracer import feature_context, AgentRun
 
 def chat_view(request):
     message = request.POST.get("message")
@@ -279,6 +427,17 @@ def chat_view(request):
         )
 
     return JsonResponse({"reply": response.choices[0].message.content})
+
+def agent_view(request):
+    query = request.POST.get("query")
+
+    with AgentRun(run_name="django-agent", feature_tag="agent"):
+        response = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": query}]
+        )
+
+    return JsonResponse({"answer": response.choices[0].message.content})
 ```
 
 ## Configuration
@@ -315,8 +474,12 @@ Every LLM call automatically captures:
 | `feature_tag` | Feature label for cost grouping |
 | `input_tokens` | Number of input/prompt tokens |
 | `output_tokens` | Number of output/completion tokens |
+| `cached_tokens` | Prompt-cached tokens (OpenAI, Anthropic, Gemini) |
 | `latency_ms` | Request latency in milliseconds |
+| `success` | Whether the call succeeded |
+| `error_type` | Exception class name on failure |
 | `environment` | Deployment environment |
+| `end_user_id` | End user identifier (when provided) |
 
 We **never** capture prompts, responses, or any PII. Only metadata and usage metrics.
 

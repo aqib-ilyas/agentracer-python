@@ -40,15 +40,31 @@ try:
                 return _wrap_gemini_stream(stream, self._model_name, tag, start)
 
             start = time.time()
-            response = self._model.generate_content(*args, **kwargs)
+            try:
+                response = self._model.generate_content(*args, **kwargs)
+            except Exception as exc:
+                latency = (time.time() - start) * 1000
+                track(
+                    model=self._model_name,
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency,
+                    feature_tag=tag,
+                    provider="gemini",
+                    success=False,
+                    error_type=type(exc).__name__,
+                )
+                raise
             latency = (time.time() - start) * 1000
 
             try:
                 usage = response.usage_metadata
+                cached = getattr(usage, "cached_content_token_count", 0) or 0
                 track(
                     model=self._model_name,
                     input_tokens=usage.prompt_token_count,
                     output_tokens=usage.candidates_token_count,
+                    cached_tokens=cached,
                     latency_ms=latency,
                     feature_tag=tag,
                     provider="gemini"
