@@ -32,7 +32,6 @@ jobs:
     name: Build and publish
     needs: test
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@v4
 
